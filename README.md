@@ -8,7 +8,11 @@ one-time firmware update for the pedal.
 
 > ### 👉 Just want to light up your pedal?
 > **Follow the [Step-by-Step Guide](GUIDE.md).** Plain language, no coding, no terminal.
-> Or open the live editor: **https://gonzodamus.github.io/FBV3_over_USB/** (Chrome or Edge).
+> It walks you through the one-time firmware update, then the live editor:
+> **https://gonzodamus.github.io/FBV3_over_USB/** (Chrome or Edge).
+>
+> The editor only works once your pedal has the patched firmware. Without it, the page
+> opens but stays on "Pedal not found."
 
 **Status:** working on Line 6 firmware v1.02.00. The patched build reports version
 `1.0.2.0.1`. The rest of this README is the technical overview (command line plus how it
