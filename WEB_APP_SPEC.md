@@ -76,7 +76,7 @@ Reference: `sendmidi dev "FBV 3" cc 0 9` lights FS1 steady green.
   needed** (LEDs are plain CC); leaving it off avoids an extra permission prompt.
 - Output port names vary by OS/driver — **match on substring `"FBV 3"`**, don't assume an
   exact string. Handle the device being absent / hot-plugged (`onstatechange`).
-- **Requires the patched firmware** (`Fbv3_ledcc_v7.hxf`, reports version `1.0.2.0.1`).
+- **Requires the patched firmware** (`Fbv3_ledcc_v7.hxf`, **FBV Chroma 1.1**).
   Stock firmware ignores these CCs, so the app does nothing on an unpatched pedal.
 
 ## Out of scope

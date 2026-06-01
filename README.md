@@ -8,8 +8,9 @@ web editor and a one-time firmware update for the pedal.
 > **Follow the [Step-by-Step Guide](GUIDE.md)** — plain language, no coding, no terminal.
 > Or open the live editor: **https://gonzodamus.github.io/FBV3_over_USB/** (Chrome/Edge).
 
-**Status:** working on Line 6 firmware v1.02.00; the patched build reports version
-`1.0.2.0.1`. The rest of this README is the **technical** overview (command line + how it
+**Status:** working on Line 6 firmware v1.02.00. The patched build is **FBV Chroma 1.1**:
+the pedal's LCD shows "FBV Chroma 1.1" at startup, and it lists as version 1.10 in the
+Line 6 Updater. The rest of this README is the **technical** overview (command line + how it
 works) — if you're not a developer, the [guide](GUIDE.md) above is all you need.
 
 ---
@@ -47,6 +48,22 @@ It also adds a switchable **footswitch-LED behavior**, toggled over USB (CC #16)
 
 > If you don't already have it, build the patched firmware yourself — see
 > [Building from source](#building-from-source).
+
+> ⚠️ **Use the Updater's *offline* mode.** In online mode the Line 6 Updater
+> detects your connected FBV3, checks it against Line 6's servers, and pushes the
+> latest *official* firmware — overwriting your custom build to "correct" anything
+> that doesn't match the official release. Offline mode lets you point the updater
+> at a local `.hxf` file directly and skips that server check; that's the standard
+> way to install any custom/modified firmware on Line 6 devices. A few things to
+> keep in mind:
+>
+> - **Don't let the Updater launch in online mode with the FBV3 connected** — it
+>   may start flashing before you can intervene.
+> - **Keep a backup of the stock firmware file** before installing, so you can
+>   restore to factory if needed (see [Recovery](#recovery)).
+> - After flashing FBV Chroma, **avoid running the Updater in online mode with the
+>   unit connected** going forward, or it'll likely flag the firmware as outdated
+>   and try to overwrite it.
 
 ## Usage
 
@@ -106,7 +123,7 @@ With `receivemidi` (or any MIDI monitor) listening to `FBV 3`:
 
 ```sh
 sendmidi dev "FBV 3" syx hex 7E 7F 06 01     # identity request
-# reply includes ASCII "L6Version:1.0.2.0.1"  <- the modded-build marker
+# reply carries the "FBV Chroma 1.1" version marker  <- the modded-build identifier
 ```
 
 ## Building from source
@@ -150,7 +167,8 @@ boot integrity check still passes (105 bytes changed total).
   to trigger it, so in normal use you don't lose anything you can reach.
 
 **Changed:**
-- Reported firmware version `1.0.2.0.0` → `1.0.2.0.1` (a build marker).
+- Version marker bumped so the build identifies as **FBV Chroma 1.1** (shown on the
+  pedal's LCD at startup, and listed as version 1.10 in the Line 6 Updater).
 
 Reverting is just reflashing the stock firmware (see below).
 
