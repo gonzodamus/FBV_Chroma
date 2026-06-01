@@ -42,7 +42,7 @@ on-screen layout so the hardware matches the editor.
 ## Requirements
 
 - A Chromium browser (Chrome/Edge). Safari and Firefox have no Web MIDI API.
-- The FBV3 running the **patched** firmware (reports version `1.0.2.0.1`). Stock firmware
+- The FBV3 running the **patched** firmware (**FBV Chroma 1.1**). Stock firmware
   ignores these CCs, so the app does nothing on an unpatched pedal.
 
 ## Scope

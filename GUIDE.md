@@ -1,7 +1,7 @@
-# FBV3 LED Control — Step-by-Step Guide
+# FBV3 LED Control: Step-by-Step Guide
 
 This guide is for **everyone**, no coding needed. By the end, your Line 6 FBV3's
-footswitch lights will be controllable from your computer — pick any color for any
+footswitch lights will be controllable from your computer. Pick any color for any
 switch, right from a web page.
 
 There are two parts:
@@ -9,9 +9,9 @@ There are two parts:
 1. **Flash the firmware** (a one-time update to your pedal).
 2. **Use the LED editor** (a web page where you click switches and choose colors).
 
-> **Is this safe?** Flashing is reversible — if anything goes wrong you can put the
+> **Is this safe?** Flashing is reversible. If anything goes wrong you can put the
 > original Line 6 firmware back (see [If something goes wrong](#if-something-goes-wrong)).
-> That said, you do this at your own risk; this is an unofficial mod, not made by Line 6.
+> That said, you do this at your own risk. This is an unofficial mod, not made by Line 6.
 
 ---
 
@@ -21,17 +21,17 @@ There are two parts:
 - A **Mac or Windows PC**.
 - The **Line 6 FBV3 Updater** app (the official Line 6 program for updating the pedal).
   If you've ever updated your FBV3, you already have it.
-- **Google Chrome** or **Microsoft Edge** (the LED editor needs one of these — Safari
+- **Google Chrome** or **Microsoft Edge** (the LED editor needs one of these; Safari
   and Firefox won't work).
 
 ---
 
-## Part 1 — Flash the firmware
+## Part 1: Flash the firmware
 
 ### Step 1: Get the patched firmware file
 
 The patched firmware is a small file (ending in `.hxf`). For legal reasons we can't
-hand it to you ready-made — it's built from Line 6's own firmware — but we've made
+hand it to you ready-made, since it's built from Line 6's own firmware, but we've made
 building it as easy as a double-click.
 
 **On a Mac:**
@@ -49,7 +49,7 @@ building it as easy as a double-click.
 5. Your patched file appears in the `firmware` folder as **`Fbv3_ledcc_v7.hxf`**.
 
 **On Windows** (or if you prefer the manual way), see
-[Building it yourself](README.md#building-from-source) in the README — it's two lines.
+[Building it yourself](README.md#building-from-source) in the README. It's two lines.
 
 ### Step 2: Flash it with the Line 6 Updater
 
@@ -58,18 +58,26 @@ building it as easy as a double-click.
 3. Choose the option to update from a **file**, and pick your
    **`Fbv3_ledcc_v7.hxf`**.
 4. Let it run.
-   - **You may see a brief "error" and a restart partway through — this is expected.**
+   - **You may see a brief "error" and a restart partway through. That's expected.**
      Just let it finish; the pedal checks the file a second way and accepts it.
-5. When it's done, the pedal restarts. That's it — the firmware is updated.
+5. When it's done, the pedal restarts. That's it, the firmware is updated.
 
-> How to know it worked: nothing looks different yet (the lights are controlled from
-> the computer now). Move on to Part 2 to see them in action.
+> **Heads up: use the "from a file" (offline) option, like the steps above.** If the
+> Updater starts in online mode with the pedal plugged in, it checks Line 6's servers
+> and can reinstall the official firmware right over your patched one, sometimes before
+> you can stop it. If it ever offers an automatic update, decline it and load the file
+> yourself. Keeping your original `Fbv3_v1_02_00.hxf` handy means you can always go back
+> to stock if you need to.
+
+> How to know it worked: when the pedal restarts, its screen shows **"FBV Chroma 1.1"**.
+> (In the Line 6 Updater it lists as version **1.10**.) The lights are controlled from
+> the computer now, so move on to Part 2 to see them in action.
 
 ---
 
-## Part 2 — Use the LED editor
+## Part 2: Use the LED editor
 
-The easiest way is the **online editor** — just open a link:
+The easiest way is the **online editor**. Just open a link:
 
 ### Option A: Open the web editor (easiest)
 
@@ -78,13 +86,13 @@ The easiest way is the **online editor** — just open a link:
    **https://gonzodamus.github.io/FBV3_over_USB/**
 
 2. Make sure your FBV3 is plugged in by USB.
-3. The page will ask permission to use **MIDI** — click **Allow**.
+3. The page will ask permission to use **MIDI**. Click **Allow**.
 4. The top of the page should say **Connected: FBV 3**. (If it doesn't, see
    [If something goes wrong](#if-something-goes-wrong).)
 
 ### Option B: Run it on your own computer (offline)
 
-If you'd rather not use the hosted page, you can run the same editor locally — see
+If you'd rather not use the hosted page, you can run the same editor locally. See
 [Run it locally](webapp/README.md#run-it) in the web app's README.
 
 ### Using the editor
@@ -109,7 +117,7 @@ If you'd rather not use the hosted page, you can run the same editor locally —
 **The editor says "Pedal not found"**
 - Make sure the FBV3 is connected by USB and you flashed the patched firmware.
 - Use **Chrome** or **Edge** (not Safari/Firefox).
-- Try unplugging and replugging the pedal — the page detects it automatically.
+- Try unplugging and replugging the pedal. The page detects it automatically.
 
 **The editor says "Web MIDI not supported"**
 - You're in a browser that can't do this. Open the page in **Chrome** or **Edge**.
@@ -120,8 +128,8 @@ If you'd rather not use the hosted page, you can run the same editor locally —
 
 **I want my pedal back to normal (un-mod it)**
 - Flash the **original** `Fbv3_v1_02_00.hxf` with the Line 6 Updater. Done.
-- If the pedal ever seems stuck: hold **FS1 + A** while plugging in the USB cable —
-  the screen shows **Update Mode** — then flash the original firmware.
+- If the pedal ever seems stuck: hold **FS1 + A** while plugging in the USB cable.
+  The screen shows **Update Mode**, then flash the original firmware.
 - The pedal's built-in recovery is separate and is never touched by this mod, so a
   permanent "brick" is very unlikely.
 
@@ -136,6 +144,6 @@ unzip it. (If you know Git, you can clone it instead.)
 
 ## Want the technical details?
 
-- [README.md](README.md) — overview, command-line usage, and how to build from source.
-- [WEB_APP_SPEC.md](WEB_APP_SPEC.md) — the MIDI protocol the editor speaks.
-- [docs/FBV_LED_FINDINGS.md](docs/FBV_LED_FINDINGS.md) — the full reverse-engineering story.
+- [README.md](README.md): overview, command-line usage, and how to build from source.
+- [WEB_APP_SPEC.md](WEB_APP_SPEC.md): the MIDI protocol the editor speaks.
+- [docs/FBV_LED_FINDINGS.md](docs/FBV_LED_FINDINGS.md): the full reverse-engineering story.

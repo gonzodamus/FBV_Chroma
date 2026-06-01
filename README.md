@@ -18,7 +18,10 @@ one-time firmware update for the pedal.
 `1.0.2.0.1`. The rest of this README is the technical overview (command line plus how it
 works). If you're not a developer, the [guide](GUIDE.md) above is all you need.
 
-## Tradeoffs
+**Status:** working on Line 6 firmware v1.02.00. The patched build is **FBV Chroma 1.1**:
+the pedal's LCD shows "FBV Chroma 1.1" at startup, and it lists as version 1.10 in the
+Line 6 Updater. The rest of this README is the **technical** overview (command line + how it
+works) — if you're not a developer, the [guide](GUIDE.md) above is all you need.
 
 The only thing this patch gives up is the **factory manufacturing self-test** (the "NITEST"
 button and LCD self-test). Our LED code is tucked inside that routine, so it no longer runs.
@@ -59,6 +62,22 @@ It also adds a switchable footswitch-LED behavior, toggled over USB (CC #16):
 
 > Don't have the patched file yet? Build it yourself, see
 > [Building from source](#building-from-source).
+
+> ⚠️ **Use the Updater's *offline* mode.** In online mode the Line 6 Updater
+> detects your connected FBV3, checks it against Line 6's servers, and pushes the
+> latest *official* firmware — overwriting your custom build to "correct" anything
+> that doesn't match the official release. Offline mode lets you point the updater
+> at a local `.hxf` file directly and skips that server check; that's the standard
+> way to install any custom/modified firmware on Line 6 devices. A few things to
+> keep in mind:
+>
+> - **Don't let the Updater launch in online mode with the FBV3 connected** — it
+>   may start flashing before you can intervene.
+> - **Keep a backup of the stock firmware file** before installing, so you can
+>   restore to factory if needed (see [Recovery](#recovery)).
+> - After flashing FBV Chroma, **avoid running the Updater in online mode with the
+>   unit connected** going forward, or it'll likely flag the firmware as outdated
+>   and try to overwrite it.
 
 ## Usage
 
@@ -118,7 +137,7 @@ The patched firmware answers a standard MIDI Identity Request and reports its ve
 
 ```sh
 sendmidi dev "FBV 3" syx hex 7E 7F 06 01     # identity request
-# reply includes ASCII "L6Version:1.0.2.0.1"  (the modded-build marker)
+# reply carries the "FBV Chroma 1.1" version marker  <- the modded-build identifier
 ```
 
 ## Building from source
@@ -132,7 +151,38 @@ pip install capstone                        # optional: also disassemble-verifie
 ```
 
 On a Mac you can skip the terminal: double-click **`Build patched firmware (Mac).command`**
-in Finder. It runs the same build and tells you where the output landed.
+in Finder — it runs the same build and tells you where the output landed.
+
+`build/build_firmware.py` documents exactly what it changes (a 4-byte detour, a 0x48-byte
+CC handler placed in dead space inside the factory self-test routine, a 0x1a-byte mode
+stub, a redirect of the switch-event LED call, and a 1-byte version bump). The
+reverse-engineering notes are in [`docs/FBV_LED_FINDINGS.md`](docs/FBV_LED_FINDINGS.md).
+
+## What this patch changes (and what it costs)
+
+Every edit is made in place, so the firmware image stays the same size and the device's
+boot integrity check still passes (105 bytes changed total).
+
+**Kept — nothing player-facing is lost:**
+- MIDI **out** from the knobs, expression pedal, and footswitches.
+- Inbound USB **SysEx** handling (device identity / firmware updater), left intact.
+
+**Added / changed behavior:**
+- USB Control Change → footswitch LED color/state (the main feature).
+- **Switchable footswitch-LED behavior** via CC #16: *inverted* (default — lit at rest,
+  dark while pressed) or *stock* (off at rest, lit only while pressed). Either way the LED
+  *color* you set over USB persists. The mode flag lives in RAM and resets to inverted on
+  power-up.
+
+**Removed:**
+- The **factory manufacturing self-test** (the "NITEST" button/LCD self-test routine).
+  The CC handler and mode stub are tucked inside that routine's code, so the self-test
+  no longer functions. It's an assembly-line diagnostic with no documented end-user way
+  to trigger it, so in normal use you don't lose anything you can reach.
+
+**Changed:**
+- Version marker bumped so the build identifies as **FBV Chroma 1.1** (shown on the
+  pedal's LCD at startup, and listed as version 1.10 in the Line 6 Updater).
 
 `build/build_firmware.py` documents exactly what it changes (a 4-byte detour, a 0x48-byte CC
 handler placed in dead space inside the factory self-test routine, a 0x1a-byte mode stub, a
