@@ -49,3 +49,8 @@ on-screen layout so the hardware matches the editor.
 
 LED control only. Configuring what each footswitch *sends* lives in Line 6's editor over a
 separate, un-reverse-engineered protocol and is out of scope.
+
+The editor covers the LEDs you'd actually set by hand: FS1-5, A-D, and FUNC. The firmware
+also accepts LED indices 9, 10, 11, and 13 (Pedal Volume, Pedal Wah, Tap Tempo,
+Diagnostic) over the same CC scheme; drive those directly with `sendmidi` if you need them
+(see the main README's Usage table).
