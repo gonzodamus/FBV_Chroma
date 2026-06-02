@@ -33,12 +33,6 @@ The **"Build the patched firmware"** section at the top turns a stock
 applies the exact same byte edits as `manual/build/build_firmware.py` and verifies the result
 against the known-good image checksum before offering the download.
 
-The app also **detects the connected pedal's firmware** (it queries the version over
-SysEx, which is why it requests `requestMIDIAccess({ sysex: true })`). If FBV Chroma is
-already installed, the builder collapses with a "firmware is up to date" note; if stock
-firmware is detected, it opens and prompts you to build the patch. When no pedal is
-connected, the builder stays available.
-
 ## Using it
 
 - The LEDs are laid out like the pedal. **Click a lamp to select it**, then pick a

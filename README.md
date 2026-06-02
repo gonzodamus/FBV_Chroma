@@ -125,8 +125,6 @@ sendmidi dev "FBV 3" syx hex 00 01 0C 11 03 07 00   # Line 6 version query
 # reply contains ASCII "L6Version:1.1.0.0.0"  <- the FBV Chroma build (stock is 1.0.2.0.0)
 ```
 
-(This is the same query the web app uses to detect whether your pedal already has the patch.)
-
 ## Building from source
 
 The command-line tools live in [`manual/`](manual/). The patched `.hxf` is reproducible

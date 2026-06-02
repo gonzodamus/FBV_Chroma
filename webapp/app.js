@@ -22,21 +22,6 @@ const INVERT_KEY = 'fbv3.invert';
 const INVERT_CC = 16;
 let invert = true;
 
-// Firmware version query: Line 6 SysEx the pedal answers with an ASCII
-// "L6Version:A.B.C.D.E" string. Patched = 1.1.0.0.0 (FBV Chroma 1.1),
-// stock = 1.0.2.0.0. Used to decide whether to surface the firmware builder.
-const VERSION_QUERY = [0xf0, 0x00, 0x01, 0x0c, 0x11, 0x03, 0x07, 0x00, 0xf7];
-const PATCHED_VERSION = '1.1.0.0.0';
-let inputPort = null;
-// Version detection is retried: on a warm reload the MIDI port can be ready
-// before the pedal is, so a single query may get no reply. We resend a few
-// times until a version arrives, then stop.
-let versionPoll = null;
-let versionTries = 0;
-let firmwareDetected = false;
-const VERSION_MAX_TRIES = 10;
-const VERSION_RETRY_MS = 700;
-
 const STATE_OFF = 0;
 const STATE_STEADY = 1;
 const STATE_BLINK = 2;
@@ -147,8 +132,7 @@ async function initMidi() {
   }
 
   try {
-    // sysex:true lets us query the pedal's firmware version (a SysEx message).
-    midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
   } catch (err) {
     setStatus('error', 'MIDI access denied');
     showBanner(
@@ -164,57 +148,25 @@ async function initMidi() {
   findPort();
 }
 
-async function findPort() {
+function findPort() {
   const prevId = outputPort ? outputPort.id : null;
-  let out = null;
-  for (const p of midiAccess.outputs.values()) {
-    if (p.name && p.name.includes(PORT_MATCH)) { out = p; break; }
-  }
-  let inp = null;
-  for (const p of midiAccess.inputs.values()) {
-    if (p.name && p.name.includes(PORT_MATCH)) { inp = p; break; }
-  }
-
-  outputPort = out;
-
-  // Listen on the matching input port. On a warm reload the input port can show
-  // up a moment AFTER the output (or after this first scan), so binding it is
-  // tracked separately from the output connection.
-  const inputIsNew = inp && inp !== inputPort;
-  if (inputIsNew) {
-    inputPort = inp;
-    inputPort.onmidimessage = onMidiMessage;
-  } else if (!inp) {
-    inputPort = null;
+  let found = null;
+  for (const out of midiAccess.outputs.values()) {
+    if (out.name && out.name.includes(PORT_MATCH)) {
+      found = out;
+      break;
+    }
   }
 
-  if (out) {
-    setStatus('ok', `Connected: ${out.name}`);
+  outputPort = found;
+
+  if (found) {
+    setStatus('ok', `Connected: ${found.name}`);
     hideBanner();
-    const outputIsNew = out.id !== prevId;
-    if (outputIsNew) firmwareDetected = false; // a (re)connected pedal might differ
-    console.debug(`[FBV] findPort: out=${!!out} in=${!!inp} outNew=${outputIsNew} inNew=${inputIsNew} detected=${firmwareDetected}`);
-
-    // Ports must be open() before they pass traffic, and open() is async. Query
-    // the version whenever we have both ports but no detection yet, regardless of
-    // WHICH port just appeared. This covers refresh, where the input port often
-    // arrives after the output and a one-shot "on new output" query would miss it.
-    if (inp && !firmwareDetected && (outputIsNew || inputIsNew)) {
-      // On a warm reload the browser returns ports that report "open" but whose
-      // data path is stale (a no-op open() won't revive it). Force a close()/open()
-      // cycle to rebuild the connection, which is what a physical replug does.
-      try {
-        await Promise.all([out.close(), inp.close()]);
-        await Promise.all([out.open(), inp.open()]);
-        console.debug(`[FBV] ports reopened: out=${out.connection}/${out.state} in=${inp.connection}/${inp.state}`);
-      } catch (err) {
-        console.error('MIDI port reopen failed', err);
-      }
-      if (outputIsNew) {
-        sendInvert();
-        sendAll();
-      }
-      queryVersion();
+    // Newly (re)connected: push the global flag + layout so the pedal matches.
+    if (found.id !== prevId) {
+      sendInvert();
+      sendAll();
     }
   } else {
     setStatus('pending', 'Pedal not found');
@@ -223,66 +175,7 @@ async function findPort() {
         '(it must be running the patched firmware, <code>FBV Chroma 1.1</code>). ' +
         'It will be detected automatically when it appears, no reload needed.'
     );
-    stopVersionPoll();
-    firmwareDetected = false;
-    setFirmwareState('unknown');
   }
-}
-
-// Start (or restart) version detection: send the query now and keep retrying
-// until a reply sets the firmware state or we run out of tries. Retrying is what
-// makes detection survive a warm reload, where the port is ready before the pedal.
-function queryVersion() {
-  stopVersionPoll();
-  versionTries = 0;
-  const attempt = () => {
-    if (!outputPort) return stopVersionPoll();
-    versionTries++;
-    try {
-      outputPort.send(VERSION_QUERY);
-      console.debug(`[FBV] version query sent (try ${versionTries})`);
-    } catch (err) {
-      console.error('version query failed', err);
-    }
-    if (versionTries >= VERSION_MAX_TRIES) {
-      stopVersionPoll();
-      console.debug('[FBV] version query gave up after max tries (no reply received)');
-    }
-  };
-  attempt();
-  versionPoll = setInterval(attempt, VERSION_RETRY_MS);
-}
-
-function stopVersionPoll() {
-  if (versionPoll) {
-    clearInterval(versionPoll);
-    versionPoll = null;
-  }
-}
-
-// Parse the pedal's SysEx reply for "L6Version:A.B.C.D.E". A long SysEx reply may
-// arrive split across several onmidimessage events, so accumulate bytes from F0
-// (start) to F7 (end) and scan the assembled buffer.
-let sysexBuf = [];
-function onMidiMessage(e) {
-  console.debug('[FBV] MIDI in:', Array.from(e.data, (b) => b.toString(16).padStart(2, '0')).join(' '));
-  for (const b of e.data) {
-    if (b === 0xf0) sysexBuf = [];
-    sysexBuf.push(b);
-    if (b === 0xf7) {
-      const text = String.fromCharCode.apply(null, sysexBuf);
-      sysexBuf = [];
-      const m = text.match(/L6Version:([0-9.]+)/);
-      if (m) {
-        stopVersionPoll();
-        firmwareDetected = true;
-        console.debug(`[FBV] version reply: ${m[1]} (${m[1] === PATCHED_VERSION ? 'patched' : 'stock'})`);
-        setFirmwareState(m[1] === PATCHED_VERSION ? 'patched' : 'stock', m[1]);
-      }
-    }
-  }
-  // Cap the buffer so a never-terminated stream can't grow unbounded.
-  if (sysexBuf.length > 4096) sysexBuf = [];
 }
 
 /* ---------- Status / banner ---------- */
@@ -708,29 +601,6 @@ function initBuilder() {
       input.value = ''; // allow re-picking the same file
     }
   });
-}
-
-// Show/hide the firmware builder based on the connected pedal's firmware:
-//   'patched' -> collapse and confirm; 'stock' -> open and prompt; 'unknown' -> show.
-function setFirmwareState(state, version) {
-  const builder = document.getElementById('builder');
-  const summary = document.getElementById('builderSummary');
-  if (!builder || !summary) return;
-
-  if (state === 'patched') {
-    summary.textContent = `✓ FBV Chroma ${version === PATCHED_VERSION ? '1.1' : version} detected. Firmware is up to date.`;
-    builder.open = false;
-    builder.classList.add('builder--ok');
-    builder.classList.remove('builder--attention');
-  } else if (state === 'stock') {
-    summary.textContent = 'Your pedal has stock firmware. Build the FBV Chroma patch ›';
-    builder.open = true;
-    builder.classList.add('builder--attention');
-    builder.classList.remove('builder--ok');
-  } else {
-    summary.textContent = 'First time here? Build the patched firmware ›';
-    builder.classList.remove('builder--ok', 'builder--attention');
-  }
 }
 
 function downloadBlob(blob, name) {
