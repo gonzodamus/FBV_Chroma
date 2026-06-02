@@ -28,6 +28,13 @@ let invert = true;
 const VERSION_QUERY = [0xf0, 0x00, 0x01, 0x0c, 0x11, 0x03, 0x07, 0x00, 0xf7];
 const PATCHED_VERSION = '1.1.0.0.0';
 let inputPort = null;
+// Version detection is retried: on a warm reload the MIDI port can be ready
+// before the pedal is, so a single query may get no reply. We resend a few
+// times until a version arrives, then stop.
+let versionPoll = null;
+let versionTries = 0;
+const VERSION_MAX_TRIES = 6;
+const VERSION_RETRY_MS = 700;
 
 const STATE_OFF = 0;
 const STATE_STEADY = 1;
@@ -185,6 +192,7 @@ function findPort() {
         '(it must be running the patched firmware, <code>FBV Chroma 1.1</code>). ' +
         'It will be detected automatically when it appears, no reload needed.'
     );
+    stopVersionPoll();
     setFirmwareState('unknown');
   }
 }
@@ -206,13 +214,30 @@ function bindInputPort() {
   }
 }
 
+// Start (or restart) version detection: send the query now and keep retrying
+// until a reply sets the firmware state or we run out of tries. Retrying is what
+// makes detection survive a warm reload, where the port is ready before the pedal.
 function queryVersion() {
-  if (outputPort) {
+  stopVersionPoll();
+  versionTries = 0;
+  const attempt = () => {
+    if (!outputPort) return stopVersionPoll();
+    versionTries++;
     try {
       outputPort.send(VERSION_QUERY);
     } catch (err) {
       console.error('version query failed', err);
     }
+    if (versionTries >= VERSION_MAX_TRIES) stopVersionPoll();
+  };
+  attempt();
+  versionPoll = setInterval(attempt, VERSION_RETRY_MS);
+}
+
+function stopVersionPoll() {
+  if (versionPoll) {
+    clearInterval(versionPoll);
+    versionPoll = null;
   }
 }
 
@@ -228,7 +253,10 @@ function onMidiMessage(e) {
       const text = String.fromCharCode.apply(null, sysexBuf);
       sysexBuf = [];
       const m = text.match(/L6Version:([0-9.]+)/);
-      if (m) setFirmwareState(m[1] === PATCHED_VERSION ? 'patched' : 'stock', m[1]);
+      if (m) {
+        stopVersionPoll();
+        setFirmwareState(m[1] === PATCHED_VERSION ? 'patched' : 'stock', m[1]);
+      }
     }
   }
   // Cap the buffer so a never-terminated stream can't grow unbounded.
