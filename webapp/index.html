@@ -59,16 +59,28 @@
       </select>
       <button id="applyBehaviorAll" class="btn">Apply to all</button>
     </div>
-    <button id="saveScene" class="btn btn--primary toolbar__save">Save current&hellip;</button>
+    <div class="toolbar__group toolbar__save">
+      <button id="saveScene" class="btn btn--primary">Save current&hellip;</button>
+      <button id="saveLeds" class="btn" title="Commit the current LED colors and behaviors to the pedal so they survive a power-cycle. The pedal restarts after saving.">Save LED settings to pedal</button>
+    </div>
   </section>
 
+  <p class="hint hint--inline">
+    <strong>Save LED settings to pedal</strong> writes the current colors and behaviors to
+    the pedal's memory so they survive a power-cycle. The pedal will restart after saving.
+  </p>
+
   <main id="board" class="board"></main>
+
+  <section id="assignPanel"></section>
 
   <footer class="footer">
     <p>
       Sends <code>Control Change</code> on channel&nbsp;1:
       <code>CC#&nbsp;=&nbsp;LED&nbsp;index</code>, <code>value&nbsp;=&nbsp;state&nbsp;&times;&nbsp;8&nbsp;+&nbsp;color</code>.
       Behavior: <code>CC&nbsp;16</code>, <code>value&nbsp;=&nbsp;ledIndex&nbsp;&times;&nbsp;4&nbsp;+&nbsp;behavior</code>.
+      Save LEDs to memory: <code>CC&nbsp;17&nbsp;=&nbsp;1</code>. MIDI assignments use the pedal's
+      config SysEx (<code>F0 00 01 0C 11 03 &hellip; F7</code>).
       Requires the patched firmware (<code>FBV Chroma 1.2</code>) and a Chromium browser
       served over <code>https</code> or <code>localhost</code>.
     </p>

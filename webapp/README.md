@@ -48,6 +48,36 @@ against the known-good image checksum before offering the download.
   toolbar next to the presets. Click a chip to apply that scene (sends every LED); click
   its **×** to delete it.
 - Your current layout is remembered across reloads.
+- **Save LED settings to pedal** (toolbar) commits the current colors and behaviors to the
+  pedal's memory so they survive a power-cycle. It sends `CC 17 = 1`; the pedal **restarts**
+  after saving. (Needs the persistent-LED firmware; older builds ignore it.)
+
+## MIDI assignments (what each control sends)
+
+The **MIDI assignments** panel below the board edits the per-control assignment table the
+pedal stores in its own memory (the same table Line 6's FBV Control writes). This talks to the
+pedal over **SysEx**, so the app now requests Web MIDI with SysEx enabled and listens on the
+`FBV 3` **input** port for the pedal's reply.
+
+- **Read from pedal** dumps the current table and lists all 17 controls. Each row shows the
+  control name and its assignment.
+- **CC** rows are editable: change the **CC number** and pick a mode -- **Single**,
+  **Momentary**, or **Toggle**.
+- Non-CC rows (Program Change, Bank, Unassigned) are shown **read-only** so the app never
+  corrupts an assignment type it does not model.
+- **Write to pedal** does a read-modify-write of the whole table and saves it. The pedal
+  **reboots** after a write.
+
+This is a **read-modify-write** flow: always *Read from pedal* first so you are editing the
+real table, then *Write to pedal*.
+
+Two values are not yet confirmed on hardware and are encoded as clearly-flagged constants in
+`app.js` (search for `TODO(hardware-batch)`):
+
+- `CONFIG_WRITE_CMD` -- the SysEx write/commit opcode (current best guess: `0x01`).
+- `ASSIGN_ENCODING` -- how Single / Momentary / Toggle map to a CC record's value fields.
+
+Control indices 14-16 are also unconfirmed and shown as `Ctrl 14/15/16`.
 
 ## Requirements
 
@@ -57,8 +87,9 @@ against the known-good image checksum before offering the download.
 
 ## Scope
 
-LED control only. Configuring what each footswitch *sends* lives in Line 6's editor over a
-separate, un-reverse-engineered protocol and is out of scope.
+LED control plus a **CC-only** MIDI assignment editor. The assignment editor models the
+**Control Change** assignment type (single / momentary / toggle); other types (Program
+Change, Bank, Mackie/MMC, Unassigned) are read-only so they are never corrupted.
 
 The editor covers the LEDs you'd actually set by hand: FS1-5, A-D, and FUNC. The firmware
 also accepts LED indices 9, 10, 11, and 13 (Pedal Volume, Pedal Wah, Tap Tempo,

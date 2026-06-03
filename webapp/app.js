@@ -9,6 +9,11 @@
  *   - CC number = LED index
  *   - CC value  = state * 8 + color   (off => value 0)
  *   - CC 16: per-LED behavior. Value = ledIndex * 4 + behavior (0-3).
+ *   - CC 17 = 1: commit current LED state to NVM (Feature B; pedal reboots).
+ *
+ * The MIDI assignment editor additionally uses the pedal's config SysEx protocol
+ * (read-modify-write of the per-control assignment table). See the constants and
+ * the Config SysEx helpers below.
  * -------------------------------------------------------------------------- */
 
 const PORT_MATCH = 'FBV 3';
@@ -17,6 +22,103 @@ const SCENES_KEY = 'fbv3.scenes';
 const LAST_KEY = 'fbv3.lastLayout';
 
 const BEHAVIOR_CC = 16;
+
+// CC #17 = "commit current LED state to NVM" (Feature B). The firmware packs the
+// LED colors + behaviors into the config blob and calls the stock commit routine,
+// which reboots the pedal. The webapp just sends one CC.
+const SAVE_LED_CC = 17;
+
+/* ---------- Config SysEx (MIDI assignment editor) ----------
+ *
+ * The pedal stores a per-control MIDI-assignment table in NVM and speaks it over
+ * USB-MIDI SysEx (this is what Line 6's FBV Control drives). Reverse-engineered
+ * frame: F0 00 01 0C 11 03 <cmd> <data..> F7.
+ *
+ *   READ:  F0 00 01 0C 11 03 00 00 F7
+ *   reply: F0 00 01 0C 11 03 01 0A 0C <17 records x 10 bytes> <chk> F7
+ *
+ * Record (10 bytes) = IDX 01 00 TYPE CHAN 00 P1 P2 P3 00
+ *   IDX  = control index (0x00..0x10)
+ *   TYPE = assignment type (0x01 = CC; 0x02/0x03 = PgmChange/Bank-ish)
+ *   CHAN = MIDI channel / sub (0x01..0x04)
+ *   P1   = CC# / program ; P2 = on-value ; P3 = off-value
+ *   offsets 2, 5, 9 are 0x00 in every record (spare).
+ *
+ * Checksum = sum(bytes from offset 6 through end-of-records) & 0x7F. Verified on
+ * live dumps.
+ */
+
+// Line 6 SysEx header (the bytes between F0 and the payload). Used for both the
+// request and to validate replies.
+const SYSEX_HEADER = [0x00, 0x01, 0x0c, 0x11, 0x03];
+
+const CONFIG_CMD_READ = 0x00; // host -> device: dump request
+const CONFIG_CMD_REPLY = 0x01; // device -> host: dump reply
+
+// TODO(hardware-batch): confirm on device -- see plan. The config WRITE/commit
+// opcode (host -> device) is not yet confirmed. Best hypothesis: echo the dump
+// reply command (0x01) back to the device. If wrong, the only change needed is
+// this one constant (try 0x02). writeConfig() is built around it.
+const CONFIG_WRITE_CMD = 0x01;
+
+// Sub-header that follows the command byte in a dump reply: 0x0A = record size
+// (10 bytes), 0x0C = table type/version. We echo it back on write.
+const CONFIG_SUBHEADER = [0x0a, 0x0c];
+
+const CONFIG_RECORD_LEN = 10;
+const CONFIG_RECORD_COUNT = 17; // control indices 0x00..0x10
+const CONFIG_CHECKSUM_OFFSET = 6; // checksum sums payload bytes from here on
+
+const CONFIG_READ_TIMEOUT_MS = 1500;
+
+// Assignment types we recognise in a record's TYPE field. Only CC (0x01) is
+// editable here; everything else is shown read-only so we never corrupt an
+// assignment we don't model.
+const ASSIGN_TYPE_CC = 0x01;
+const ASSIGN_TYPE_NAMES = {
+  0x00: 'Unassigned',
+  0x01: 'CC',
+  0x02: 'Program Change',
+  0x03: 'Bank',
+};
+
+// CC assignment modes offered in the editor.
+const ASSIGN_MODE_SINGLE = 'single';
+const ASSIGN_MODE_MOMENTARY = 'momentary';
+const ASSIGN_MODE_TOGGLE = 'toggle';
+
+const ASSIGN_MODES = [
+  { id: ASSIGN_MODE_SINGLE, label: 'Single' },
+  { id: ASSIGN_MODE_MOMENTARY, label: 'Momentary' },
+  { id: ASSIGN_MODE_TOGGLE, label: 'Toggle' },
+];
+
+// TODO(hardware-batch): confirm on device -- see plan. How single/momentary/toggle
+// map to a CC record's TYPE/CHAN/P1/P2/P3 fields is NOT yet confirmed. Hypothesis
+// from one observed CC record (02 01 00 01 03 00 40 7F 40 00 = CC#0x40, P2=0x7F,
+// P3=0x40): P2 is the on-value, P3 the off-value.
+//   - momentary: on = 0x7F, off = 0x00 (sends 7F on press, 00 on release)
+//   - toggle:    device alternates between on/off (may be a TYPE/CHAN variant; we
+//                keep the same TYPE here and treat toggle as its own mode flag)
+//   - single:    one fixed value (0x7F) sent on every press, no release message
+// The user will finalize these from FBV Control dumps. encodeMode/decodeMode below
+// are the single point that depends on this table.
+const ASSIGN_ENCODING = {
+  [ASSIGN_MODE_SINGLE]: { p2: 0x7f, p3: 0x7f },
+  [ASSIGN_MODE_MOMENTARY]: { p2: 0x7f, p3: 0x00 },
+  [ASSIGN_MODE_TOGGLE]: { p2: 0x7f, p3: 0x00 },
+};
+
+// Map the 17 control indices (0x00..0x10) to display names. 0-13 follow the LED
+// map (extended past the editable LEDS table); 14-16 are unknown until the
+// hardware batch decodes the control map.
+// TODO(hardware-batch): confirm on device -- see plan. Indices 14-16 are guesses.
+const CONFIG_CONTROL_NAMES = [
+  'FS1', 'FS2', 'FS3', 'FS4', 'FS5', // 0-4
+  'A', 'B', 'C', 'D', // 5-8
+  'Pedal Volume', 'Pedal Wah', 'Tap Tempo', 'FUNC', 'Diagnostic', // 9-13
+  'Ctrl 14', 'Ctrl 15', 'Ctrl 16', // 14-16 (unknown)
+];
 
 // Current firmware build this editor targets. Auto-detecting the pedal's
 // version over USB-MIDI is unreliable, so we show the version (see #versionNote)
@@ -95,6 +197,14 @@ LEDS.forEach((led) => {
 
 let midiAccess = null;
 let outputPort = null;
+let inputPort = null;
+
+// Pending readConfig() promise resolver, set while a dump request is in flight.
+let pendingConfigRead = null;
+
+// Last parsed assignment records (array of {idx,type,chan,p1,p2,p3}), or null
+// before the first successful read.
+let configRecords = null;
 
 // DOM refs filled in on load.
 const dom = {};
@@ -135,6 +245,153 @@ function sendAllBehaviors() {
   LEDS.forEach((led) => sendBehavior(led.idx));
 }
 
+// Feature B: tell the pedal to commit the current LED state to NVM (CC #17).
+// The firmware reboots after saving.
+function sendSaveLeds() {
+  if (!outputPort) return false;
+  try {
+    outputPort.send([CC_STATUS, SAVE_LED_CC, 1]);
+    return true;
+  } catch (err) {
+    console.error('MIDI send failed for LED save', err);
+    return false;
+  }
+}
+
+/* ---------- Config SysEx helpers ---------- */
+
+// Wrap data bytes in a SysEx frame and send. `dataBytes` excludes F0/F7.
+function sendSysex(dataBytes) {
+  if (!outputPort) return false;
+  try {
+    outputPort.send([0xf0, ...dataBytes, 0xf7]);
+    return true;
+  } catch (err) {
+    console.error('MIDI SysEx send failed', err);
+    return false;
+  }
+}
+
+// Compute the config checksum: sum of payload bytes from CONFIG_CHECKSUM_OFFSET
+// through the end of the records, masked to 7 bits. `payloadBytes` is the data
+// between F0 and F7 (header + subheader + records), excluding the checksum byte.
+function configChecksum(payloadBytes) {
+  let sum = 0;
+  for (let i = CONFIG_CHECKSUM_OFFSET; i < payloadBytes.length; i++) {
+    sum += payloadBytes[i];
+  }
+  return sum & 0x7f;
+}
+
+// Parse a full dump reply (the raw bytes including F0..F7, or just the data
+// bytes) into an array of records. Returns null if it isn't a valid reply.
+function parseConfig(replyBytes) {
+  let b = Array.from(replyBytes);
+  if (b[0] === 0xf0) b = b.slice(1);
+  if (b[b.length - 1] === 0xf7) b = b.slice(0, -1);
+
+  // Expect header + reply command.
+  for (let i = 0; i < SYSEX_HEADER.length; i++) {
+    if (b[i] !== SYSEX_HEADER[i]) return null;
+  }
+  let off = SYSEX_HEADER.length;
+  if (b[off] !== CONFIG_CMD_REPLY) return null;
+  off += 1;
+
+  // Sub-header (0A 0C).
+  for (let i = 0; i < CONFIG_SUBHEADER.length; i++) {
+    if (b[off + i] !== CONFIG_SUBHEADER[i]) return null;
+  }
+  off += CONFIG_SUBHEADER.length;
+
+  const records = [];
+  for (let r = 0; r < CONFIG_RECORD_COUNT; r++) {
+    const base = off + r * CONFIG_RECORD_LEN;
+    if (base + CONFIG_RECORD_LEN > b.length) break;
+    records.push({
+      idx: b[base + 0],
+      type: b[base + 3],
+      chan: b[base + 4],
+      p1: b[base + 6],
+      p2: b[base + 7],
+      p3: b[base + 8],
+    });
+  }
+  return records;
+}
+
+// Reassemble the full data byte array (between F0 and F7) from records:
+// header + reply/write command + 0A 0C + records + checksum.
+function buildConfig(records) {
+  const payload = [...SYSEX_HEADER, CONFIG_WRITE_CMD, ...CONFIG_SUBHEADER];
+  for (const rec of records) {
+    payload.push(
+      rec.idx & 0x7f,
+      0x01,
+      0x00,
+      rec.type & 0x7f,
+      rec.chan & 0x7f,
+      0x00,
+      rec.p1 & 0x7f,
+      rec.p2 & 0x7f,
+      rec.p3 & 0x7f,
+      0x00
+    );
+  }
+  payload.push(configChecksum(payload));
+  return payload;
+}
+
+// Send the dump request and resolve with the parsed records when the reply
+// arrives on the input port. Rejects on timeout or if no port is connected.
+function readConfig() {
+  return new Promise((resolve, reject) => {
+    if (!outputPort) {
+      reject(new Error('No pedal connected'));
+      return;
+    }
+    if (!inputPort) {
+      reject(new Error('No FBV 3 MIDI input port (cannot receive a config dump)'));
+      return;
+    }
+    if (pendingConfigRead) {
+      reject(new Error('A config read is already in progress'));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      pendingConfigRead = null;
+      reject(new Error('Timed out waiting for the pedal to reply'));
+    }, CONFIG_READ_TIMEOUT_MS);
+
+    pendingConfigRead = (records) => {
+      clearTimeout(timer);
+      pendingConfigRead = null;
+      resolve(records);
+    };
+
+    // Dump request: cmd 0x00, one (ignored) page byte.
+    sendSysex([...SYSEX_HEADER, CONFIG_CMD_READ, 0x00]);
+  });
+}
+
+// Write the assignment table back to the pedal. Warns the caller that the pedal
+// reboots after a commit (the firmware restarts on a successful config save).
+function writeConfig(records) {
+  if (!outputPort) return false;
+  return sendSysex(buildConfig(records));
+}
+
+// Inbound MIDI handler: resolve a pending readConfig() when a dump reply lands.
+function onMidiMessage(event) {
+  const data = event.data;
+  if (!data || data[0] !== 0xf0) return; // only care about SysEx
+  const records = parseConfig(data);
+  if (records && pendingConfigRead) {
+    pendingConfigRead(records);
+  }
+}
+
 /* ---------- MIDI setup ---------- */
 
 async function initMidi() {
@@ -149,7 +406,7 @@ async function initMidi() {
   }
 
   try {
-    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    midiAccess = await navigator.requestMIDIAccess({ sysex: true });
   } catch (err) {
     setStatus('error', 'MIDI access denied');
     showBanner(
@@ -176,6 +433,19 @@ function findPort() {
   }
 
   outputPort = found;
+
+  // Also grab the matching input port so we can receive config-dump replies.
+  // The app was output-only before the assignment editor.
+  let foundIn = null;
+  for (const inp of midiAccess.inputs.values()) {
+    if (inp.name && inp.name.includes(PORT_MATCH)) {
+      foundIn = inp;
+      break;
+    }
+  }
+  if (inputPort && inputPort !== foundIn) inputPort.onmidimessage = null;
+  inputPort = foundIn;
+  if (inputPort) inputPort.onmidimessage = onMidiMessage;
 
   if (found) {
     setStatus('ok', `Connected: ${found.name}`);
@@ -573,6 +843,195 @@ function clampBehavior(v) {
   return Number.isInteger(v) && v >= 0 && v <= 3 ? v : 0;
 }
 
+/* ---------- Assignment editor (MIDI assignments over config SysEx) ---------- */
+
+// Derive a CC mode (single / momentary / toggle) from a record's P2/P3 values.
+// Mirrors ASSIGN_ENCODING; falls back to momentary for unrecognised pairs.
+// TODO(hardware-batch): confirm on device -- see plan. Toggle vs single may need
+// a TYPE/CHAN distinction we can't see yet.
+function decodeMode(rec) {
+  if (rec.p3 === rec.p2) return ASSIGN_MODE_SINGLE;
+  if (rec.p3 === 0x00) return ASSIGN_MODE_MOMENTARY;
+  return ASSIGN_MODE_MOMENTARY;
+}
+
+// Apply a chosen mode to a record's P2/P3 (in place).
+function encodeMode(rec, mode) {
+  const enc = ASSIGN_ENCODING[mode] || ASSIGN_ENCODING[ASSIGN_MODE_MOMENTARY];
+  rec.p2 = enc.p2;
+  rec.p3 = enc.p3;
+  rec.mode = mode;
+}
+
+function controlName(idx) {
+  return CONFIG_CONTROL_NAMES[idx] || `Ctrl ${idx}`;
+}
+
+function typeName(type) {
+  return ASSIGN_TYPE_NAMES[type] || `Type 0x${type.toString(16)}`;
+}
+
+// Build the assignment editor panel. It is empty (just a Read button + hint)
+// until a dump is read from the pedal.
+function buildAssignPanel() {
+  const card = document.createElement('section');
+  card.className = 'assign';
+
+  const head = document.createElement('div');
+  head.className = 'assign__head';
+  head.innerHTML =
+    '<h2 class="assign__title">MIDI assignments</h2>' +
+    '<p class="assign__sub">What each control sends. Read the current table from the ' +
+    'pedal, edit a CC assignment, then write it back. <strong>Writing reboots the ' +
+    'pedal.</strong></p>';
+  card.appendChild(head);
+
+  const actions = document.createElement('div');
+  actions.className = 'assign__actions';
+
+  const readBtn = document.createElement('button');
+  readBtn.id = 'assignRead';
+  readBtn.className = 'btn';
+  readBtn.textContent = 'Read from pedal';
+  actions.appendChild(readBtn);
+
+  const writeBtn = document.createElement('button');
+  writeBtn.id = 'assignWrite';
+  writeBtn.className = 'btn btn--primary';
+  writeBtn.textContent = 'Write to pedal';
+  writeBtn.disabled = true;
+  actions.appendChild(writeBtn);
+
+  const msg = document.createElement('span');
+  msg.id = 'assignMsg';
+  msg.className = 'assign__msg';
+  actions.appendChild(msg);
+
+  card.appendChild(actions);
+
+  const rows = document.createElement('div');
+  rows.id = 'assignRows';
+  rows.className = 'assign__rows';
+  card.appendChild(rows);
+
+  return card;
+}
+
+function setAssignMsg(text, kind) {
+  if (!dom.assignMsg) return;
+  dom.assignMsg.textContent = text || '';
+  dom.assignMsg.className = 'assign__msg' + (kind ? ` assign__msg--${kind}` : '');
+}
+
+// Render the records table from `configRecords`. CC records are editable;
+// everything else is read-only.
+function renderAssignRows() {
+  const wrap = dom.assignRows;
+  wrap.innerHTML = '';
+  if (!configRecords) return;
+
+  for (const rec of configRecords) {
+    const row = document.createElement('div');
+    row.className = 'assign-row';
+
+    const name = document.createElement('span');
+    name.className = 'assign-row__name';
+    name.textContent = controlName(rec.idx);
+    row.appendChild(name);
+
+    if (rec.type !== ASSIGN_TYPE_CC) {
+      row.classList.add('assign-row--ro');
+      const ro = document.createElement('span');
+      ro.className = 'assign-row__ro';
+      ro.textContent = typeName(rec.type);
+      row.appendChild(ro);
+      wrap.appendChild(row);
+      continue;
+    }
+
+    // CC number input.
+    const ccWrap = document.createElement('label');
+    ccWrap.className = 'assign-row__cc';
+    ccWrap.append('CC ');
+    const cc = document.createElement('input');
+    cc.type = 'number';
+    cc.min = '0';
+    cc.max = '127';
+    cc.value = String(rec.p1);
+    cc.className = 'assign-row__num';
+    cc.addEventListener('change', () => {
+      let v = parseInt(cc.value, 10);
+      if (!Number.isInteger(v)) v = 0;
+      v = Math.max(0, Math.min(127, v));
+      cc.value = String(v);
+      rec.p1 = v;
+    });
+    ccWrap.appendChild(cc);
+    row.appendChild(ccWrap);
+
+    // Mode selector (single / momentary / toggle).
+    const modes = document.createElement('div');
+    modes.className = 'states assign-row__modes';
+    const current = rec.mode || decodeMode(rec);
+    for (const m of ASSIGN_MODES) {
+      const btn = document.createElement('button');
+      btn.className = 'state-btn';
+      btn.dataset.mode = m.id;
+      btn.textContent = m.label;
+      btn.classList.toggle('state-btn--active', m.id === current);
+      btn.addEventListener('click', () => {
+        encodeMode(rec, m.id);
+        modes.querySelectorAll('.state-btn').forEach((b) => {
+          b.classList.toggle('state-btn--active', b.dataset.mode === m.id);
+        });
+      });
+      modes.appendChild(btn);
+    }
+    rec.mode = current;
+    row.appendChild(modes);
+
+    wrap.appendChild(row);
+  }
+}
+
+async function onAssignRead() {
+  if (!outputPort) {
+    setAssignMsg('Pedal not connected.', 'error');
+    return;
+  }
+  setAssignMsg('Reading...', null);
+  try {
+    const records = await readConfig();
+    records.forEach((rec) => {
+      if (rec.type === ASSIGN_TYPE_CC) rec.mode = decodeMode(rec);
+    });
+    configRecords = records;
+    renderAssignRows();
+    if (dom.assignWrite) dom.assignWrite.disabled = false;
+    setAssignMsg(`Read ${records.length} assignments.`, 'ok');
+  } catch (err) {
+    setAssignMsg(err && err.message ? err.message : String(err), 'error');
+  }
+}
+
+function onAssignWrite() {
+  if (!configRecords) return;
+  if (
+    !confirm(
+      'Write the assignment table to the pedal?\n\n' +
+        'The pedal will REBOOT after saving. Any unsaved LED changes are kept ' +
+        '(they live in the app and re-send on reconnect).'
+    )
+  ) {
+    return;
+  }
+  const ok = writeConfig(configRecords);
+  setAssignMsg(
+    ok ? 'Write sent. The pedal is rebooting...' : 'Write failed (no pedal).',
+    ok ? 'ok' : 'error'
+  );
+}
+
 /* ---------- Wire up ---------- */
 
 function init() {
@@ -583,6 +1042,8 @@ function init() {
   dom.applyBehaviorAll = document.getElementById('applyBehaviorAll');
   dom.sceneChips = document.getElementById('sceneChips');
   dom.saveScene = document.getElementById('saveScene');
+  dom.saveLeds = document.getElementById('saveLeds');
+  dom.assignPanel = document.getElementById('assignPanel');
   dom.versionNote = document.getElementById('versionNote');
 
   dom.versionNote.innerHTML =
@@ -601,9 +1062,38 @@ function init() {
   });
   dom.saveScene.addEventListener('click', saveScene);
 
+  // Feature B: save LED settings to the pedal's NVM (CC #17, reboots the pedal).
+  if (dom.saveLeds) {
+    dom.saveLeds.addEventListener('click', () => {
+      if (!outputPort) {
+        alert('Pedal not connected.');
+        return;
+      }
+      if (
+        !confirm(
+          'Save the current LED colors and behaviors to the pedal so they ' +
+            'survive a power-cycle?\n\nThe pedal will RESTART after saving.'
+        )
+      ) {
+        return;
+      }
+      sendSaveLeds();
+    });
+  }
+
   document.querySelectorAll('[data-preset]').forEach((btn) => {
     btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
   });
+
+  // Assignment editor panel.
+  if (dom.assignPanel) {
+    dom.assignPanel.appendChild(buildAssignPanel());
+    dom.assignRows = document.getElementById('assignRows');
+    dom.assignMsg = document.getElementById('assignMsg');
+    dom.assignWrite = document.getElementById('assignWrite');
+    document.getElementById('assignRead').addEventListener('click', onAssignRead);
+    dom.assignWrite.addEventListener('click', onAssignWrite);
+  }
 
   initBuilder();
   initMidi();
